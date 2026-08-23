@@ -5,9 +5,10 @@ export const config = {
 };
 
 const PROMPT =
-  "Analyze this trading chart screenshot. Identify visible support and resistance levels, overall trend direction, and any visible entry/exit/stop-loss/take-profit price markers or lines. Respond with ONLY a raw JSON object, no markdown fences, no other text: " +
-  '{"instrument": string or null, "direction": "long" or "short" or null, "entry": number or null, "exit": number or null, "stop_loss": number or null, "take_profit": number or null, "support": number or null, "resistance": number or null, "trend": string or null, "bias": string or null}. ' +
-  "Use null for anything not visibly determinable on the chart. Never guess or invent a value.";
+  "You are a technical analyst. Study this trading chart and recommend a trade. Identify visible support and resistance levels and the overall trend. Based on that, decide: should the trader BUY (long) or SELL (short) right now, and give a suggested entry price, stop-loss, and take-profit. Respond with ONLY a raw JSON object, no markdown fences, no other text: " +
+  '{"instrument": string or null, "direction": "buy" or "sell", "entry": number, "stop_loss": number, "take_profit": number, "support": number or null, "resistance": number or null, "trend": string or null, "bias": string or null, "reasoning": string}. ' +
+  "direction, entry, stop_loss, and take_profit must always be filled with your best recommendation based on the visible price action — do not return null for these. Keep reasoning to one short sentence explaining why.";
+
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
