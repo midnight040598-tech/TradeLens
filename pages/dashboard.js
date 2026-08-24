@@ -24,7 +24,7 @@ function computeMetrics(t) {
   let pips = null;
   let rr = null;
   if (typeof t.entry === "number" && typeof t.exit === "number") {
-    pips = t.direction === "short" ? t.entry - t.exit : t.exit - t.entry;
+    pips = t.direction === "short" || t.direction === "sell" ? t.entry - t.exit : t.exit - t.entry;
   }
   if (typeof t.entry === "number" && typeof t.stop_loss === "number" && typeof t.take_profit === "number") {
     const risk = Math.abs(t.entry - t.stop_loss);
@@ -48,6 +48,32 @@ function DetailRow({ label, value, na }) {
   );
 }
 
+function StatusBadge({ status }) {
+  const map = {
+    signal: { label: "AI SIGNAL", bg: "rgba(232,163,61,0.15)", color: "var(--amber)" },
+    pending: { label: "PENDING EXECUTION", bg: "rgba(96,165,250,0.15)", color: "#60a5fa" },
+    executed: { label: "EXECUTED", bg: "rgba(74,222,128,0.15)", color: "var(--green)" },
+    failed: { label: "FAILED", bg: "rgba(248,113,113,0.15)", color: "var(--red)" },
+  };
+  const s = map[status] || map.signal;
+  return (
+    <span
+      style={{
+        fontFamily: "var(--mono)",
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: 0.5,
+        padding: "3px 8px",
+        borderRadius: 2,
+        background: s.bg,
+        color: s.color,
+      }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const [session, setSession] = useState(undefined);
@@ -56,6 +82,7 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -76,6 +103,13 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (session) loadTrades();
+  }, [session, loadTrades]);
+
+  // Poll every 5s so executed/failed status from the EA shows up without a manual refresh
+  useEffect(() => {
+    if (!session) return;
+    const interval = setInterval(loadTrades, 5000);
+    return () => clearInterval(interval);
   }, [session, loadTrades]);
 
   const signOut = async () => {
@@ -121,6 +155,7 @@ export default function Dashboard() {
           pips,
           rr,
           thumb: "data:" + mediaType + ";base64," + base64,
+          status: "signal",
         };
 
         const { error: insertError } = await supabase.from("trades").insert(row);
@@ -168,6 +203,21 @@ export default function Dashboard() {
     loadTrades();
   };
 
+  const confirmExecute = async (id) => {
+    setConfirming(true);
+    try {
+      const { error } = await supabase.from("trades").update({ status: "pending" }).eq("id", id);
+      if (error) throw error;
+      await loadTrades();
+      const updated = trades.find((t) => t.id === id);
+      if (updated) setSelected({ ...updated, status: "pending" });
+    } catch (e) {
+      setError(e.message || "Could not confirm trade");
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   if (session === undefined) return null;
 
   const closed = trades.filter((t) => t.pips !== null);
@@ -213,7 +263,7 @@ export default function Dashboard() {
         <div className="upload-icon">{analyzing ? "⟳" : "＋"}</div>
         <h3 style={{ margin: "0 0 6px", fontSize: 15 }}>{analyzing ? "Reading your chart…" : "Upload a chart screenshot"}</h3>
         <p style={{ margin: "0 0 16px", fontSize: 12, color: "var(--text-muted)" }}>
-          {analyzing ? "Detecting instrument, levels, and trade markers." : "Drag & drop, paste, or tap to choose a file. The trade logs itself."}
+          {analyzing ? "Analyzing and building a trade recommendation." : "Drag & drop, paste, or tap to choose a file. Get an instant buy/sell call."}
         </p>
         {!analyzing && <span className="btn">Choose screenshot</span>}
         <input
@@ -270,16 +320,28 @@ export default function Dashboard() {
 
       <div className="section-title">Journal</div>
       {trades.length === 0 ? (
-        <div className="card empty">No trades yet. Upload a chart above to log your first one automatically.</div>
+        <div className="card empty">No trades yet. Upload a chart above to get your first AI recommendation.</div>
       ) : (
         trades.map((t) => (
-          <div key={t.id} className="card trade-row" onClick={() => setSelected(t)}>
-            <div style={{ display: "flex", alignItems: "center" }}>
-              <span className={"dir-badge " + (t.direction === "long" ? "dir-long" : t.direction === "short" ? "dir-short" : "dir-na")}>{t.direction || "—"}</span>
-              <span style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 14 }}>{t.instrument || "Unknown"}</span>
+          <div key={t.id} className="card trade-row" onClick={() => setSelected(t)} style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <span
+                  className={
+                    "dir-badge " +
+                    (t.direction === "long" || t.direction === "buy" ? "dir-long" : t.direction === "short" || t.direction === "sell" ? "dir-short" : "dir-na")
+                  }
+                >
+                  {t.direction || "—"}
+                </span>
+                <span style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 14 }}>{t.instrument || "Unknown"}</span>
+              </div>
+              <div style={{ fontFamily: "var(--mono)", fontWeight: 600, color: t.pips === null ? "var(--text-muted)" : t.pips >= 0 ? "var(--green)" : "var(--red)" }}>
+                {t.pips === null ? "—" : (t.pips >= 0 ? "+" : "") + fmt(t.pips, 1)}
+              </div>
             </div>
-            <div style={{ fontFamily: "var(--mono)", fontWeight: 600, color: t.pips === null ? "var(--text-muted)" : t.pips >= 0 ? "var(--green)" : "var(--red)" }}>
-              {t.pips === null ? "—" : (t.pips >= 0 ? "+" : "") + fmt(t.pips, 1)}
+            <div>
+              <StatusBadge status={t.status || "signal"} />
             </div>
           </div>
         ))
@@ -288,13 +350,16 @@ export default function Dashboard() {
       {selected && (
         <div className="overlay" onClick={() => setSelected(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div className="logo" style={{ fontSize: 15 }}>
                 {selected.instrument || "Unknown instrument"}
               </div>
               <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 18 }}>
                 ✕
               </button>
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <StatusBadge status={selected.status || "signal"} />
             </div>
             {selected.thumb && <img src={selected.thumb} alt="chart" className="modal-img" />}
             <DetailRow label="Direction" value={selected.direction} na={!selected.direction} />
@@ -308,10 +373,38 @@ export default function Dashboard() {
             <DetailRow label="Resistance" value={fmt(selected.resistance)} na={selected.resistance === null} />
             <DetailRow label="Trend" value={selected.trend} na={!selected.trend} />
             <DetailRow label="Bias" value={selected.bias} na={!selected.bias} />
+            {selected.status === "executed" && (
+              <>
+                <DetailRow label="Filled Price" value={fmt(selected.filled_price)} na={selected.filled_price === null || selected.filled_price === undefined} />
+                <DetailRow label="Broker Ticket" value={selected.broker_ticket} na={!selected.broker_ticket} />
+              </>
+            )}
+
+            {selected.status === "signal" && (
+              <button
+                onClick={() => confirmExecute(selected.id)}
+                disabled={confirming}
+                className="btn"
+                style={{ width: "100%", justifyContent: "center", marginTop: 16 }}
+              >
+                {confirming ? "Confirming…" : "Confirm & Execute"}
+              </button>
+            )}
+            {selected.status === "pending" && (
+              <div className="error-box" style={{ color: "#60a5fa", borderColor: "rgba(96,165,250,0.3)", background: "rgba(96,165,250,0.08)", marginTop: 16, marginBottom: 0 }}>
+                Waiting for your MT5 terminal to pick this up and place the order.
+              </div>
+            )}
+            {selected.status === "failed" && (
+              <div className="error-box" style={{ marginTop: 16, marginBottom: 0 }}>
+                The EA could not place this order. Check your MT5 terminal is running and connected.
+              </div>
+            )}
+
             <button
               onClick={() => deleteTrade(selected.id)}
               style={{
-                marginTop: 16,
+                marginTop: 12,
                 width: "100%",
                 background: "rgba(248,113,113,0.1)",
                 color: "var(--red)",
